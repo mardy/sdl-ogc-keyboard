@@ -42,6 +42,13 @@
 #define LAYOUT_TEXTURE_WIDTH 256
 #define TEX_FORMAT_VERSION 1
 
+#define PIPELINE_UNTEXTURED 0
+#define PIPELINE_TEXTURED   1
+
+typedef struct Rect {
+    int16_t x, y, w, h;
+} Rect;
+
 typedef struct TextureData {
     int16_t width;
     int16_t height;
@@ -71,13 +78,13 @@ struct SDL_OGC_DriverData {
     TextureData layout_textures[NUM_LAYOUTS];
 };
 
-static const SDL_Color ColorKeyBgLetter = { 0x5A, 0x60, 0x6A, 0xff };
-static const SDL_Color ColorKeyBgLetterHigh = { 0x5A / 2, 0x60 / 2, 0x6A / 2, 0xff };
-static const SDL_Color ColorKeyBgEnter = { 0x00, 0x3C, 0x00, 0xff };
-static const SDL_Color ColorKeyBgEnterHigh = { 0x32, 0x3C*2, 0x3E, 0xff };
-static const SDL_Color ColorKeyBgSpecial = { 0x32, 0x36, 0x3E, 0xff };
-static const SDL_Color ColorKeyBgSpecialHigh = { 0x32/2, 0x36/2, 0x3E/2, 0xff };
-static const SDL_Color ColorFocus = { 0xe0, 0xf0, 0x10, 0xff };
+static const uint32_t ColorKeyBgLetter = 0x5a606aff;
+static const uint32_t ColorKeyBgLetterHigh = 0x2d3035ff;
+static const uint32_t ColorKeyBgEnter = 0x003c00ff;
+static const uint32_t ColorKeyBgEnterHigh = 0x32783eff;
+static const uint32_t ColorKeyBgSpecial = 0x32363eff;
+static const uint32_t ColorKeyBgSpecialHigh = 0x191b1fff;
+static const uint32_t ColorFocus = 0xe0f010ff;
 
 static void HideScreenKeyboard(SDL_OGC_VkContext *context);
 
@@ -171,30 +178,33 @@ static TextureData *lookup_layout_texture(SDL_OGC_DriverData *data,
     return texture;
 }
 
-static void setup_texture_pipeline(void)
+static void setup_pipeline(int type)
 {
     GX_ClearVtxDesc();
     GX_SetVtxDesc(GX_VA_POS, GX_DIRECT);
     GX_SetVtxDesc(GX_VA_CLR0, GX_DIRECT);
-    GX_SetVtxDesc(GX_VA_TEX0, GX_DIRECT);
     GX_SetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XY, GX_S16, 0);
     GX_SetVtxAttrFmt(GX_VTXFMT0, GX_VA_CLR0, GX_CLR_RGBA, GX_RGBA8, 0);
-    GX_SetVtxAttrFmt(GX_VTXFMT0, GX_VA_TEX0, GX_TEX_ST, GX_U16, 0);
-    GX_SetNumTexGens(1);
-    GX_SetTexCoordGen(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, GX_IDENTITY);
-    GX_SetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD0, GX_TEXMAP0, GX_COLOR0A0);
-    GX_SetNumTevStages(1);
-    GX_SetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA, GX_LO_CLEAR);
-    /* This custom processing is like GX_MODULATE, except that instead of
-     * picking the color from the texture (GX_CC_TEXC) we take full intensity
-     * (GX_CC_ONE).
-     */
-    GX_SetTevColorIn(GX_TEVSTAGE0, GX_CC_ZERO, GX_CC_ONE, GX_CC_RASC, GX_CC_ZERO);
-	GX_SetTevColorOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1, GX_TRUE, GX_TEVPREV);
-	GX_SetTevAlphaIn(GX_TEVSTAGE0, GX_CA_ZERO, GX_CA_TEXA, GX_CA_RASA, GX_CA_ZERO);
-	GX_SetTevAlphaOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1, GX_TRUE, GX_TEVPREV);
+    if (type & PIPELINE_TEXTURED) {
+        GX_SetVtxDesc(GX_VA_TEX0, GX_DIRECT);
+        GX_SetVtxAttrFmt(GX_VTXFMT0, GX_VA_TEX0, GX_TEX_ST, GX_U16, 0);
+        GX_SetNumTexGens(1);
+        GX_SetTexCoordGen(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, GX_IDENTITY);
+        GX_SetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD0, GX_TEXMAP0, GX_COLOR0A0);
+        GX_SetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA, GX_LO_CLEAR);
+        /* This custom processing is like GX_MODULATE, except that instead of
+         * picking the color from the texture (GX_CC_TEXC) we take full intensity
+         * (GX_CC_ONE).
+         */
+        GX_SetTevColorIn(GX_TEVSTAGE0, GX_CC_ZERO, GX_CC_ONE, GX_CC_RASC, GX_CC_ZERO);
+        GX_SetTevColorOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1, GX_TRUE, GX_TEVPREV);
+        GX_SetTevAlphaIn(GX_TEVSTAGE0, GX_CA_ZERO, GX_CA_TEXA, GX_CA_RASA, GX_CA_ZERO);
+        GX_SetTevAlphaOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1, GX_TRUE, GX_TEVPREV);
 
-    GX_SetTexCoordScaleManually(GX_TEXCOORD0, GX_TRUE, 1, 1);
+        GX_SetTexCoordScaleManually(GX_TEXCOORD0, GX_TRUE, 1, 1);
+    } else {
+        GX_SetTevOp(GX_TEVSTAGE0, GX_PASSCLR);
+    }
 }
 
 static void activate_layout_texture(const TextureData *texture)
@@ -245,6 +255,31 @@ static void draw_font_texture(const TextureData *texture, int row, int col,
     GX_End();
 }
 
+static inline void draw_filled_rect(int16_t x, int16_t y, int16_t w, int16_t h,
+                                    uint32_t color)
+{
+    GX_Begin(GX_QUADS, GX_VTXFMT0, 4);
+
+    GX_Position2s16(x, y);
+    GX_Color1u32(color);
+
+    GX_Position2s16(x + w, y);
+    GX_Color1u32(color);
+
+    GX_Position2s16(x + w, y + h);
+    GX_Color1u32(color);
+
+    GX_Position2s16(x, y + h);
+    GX_Color1u32(color);
+
+    GX_End();
+}
+
+static void draw_filled_rect_p(const Rect *rect, uint32_t color)
+{
+    return draw_filled_rect(rect->x, rect->y, rect->w, rect->h, color);
+}
+
 static inline void draw_key(SDL_OGC_VkContext *context,
                             const TextureData *texture,
                             int row, int col, const SDL_Rect *rect)
@@ -257,36 +292,32 @@ static inline void draw_key(SDL_OGC_VkContext *context,
     draw_font_texture(texture, row, col, x, y, data->key_color);
 }
 
-static inline void draw_key_background(SDL_OGC_VkContext *context, SDL_Renderer *renderer,
-                                       SDL_Rect *rect, int row, int col)
+static inline void draw_key_background(SDL_OGC_VkContext *context,
+                                       Rect *rect, int row, int col)
 {
     SDL_OGC_DriverData *data = context->driverdata;
     int highlighted;
-    const SDL_Color *color;
+    uint32_t color;
     const ButtonRow *br = rows[row];
     uint16_t col_mask = 1 << col;
 
     if (row == data->focus_row && col == data->focus_col) {
-        SDL_Rect r;
-        SDL_SetRenderDrawColor(renderer, ColorFocus.r, ColorFocus.g,
-                               ColorFocus.b, ColorFocus.a);
-        r.x = rect->x - FOCUS_BORDER;
-        r.y = rect->y - FOCUS_BORDER;
-        r.w = rect->w + FOCUS_BORDER * 2;
-        r.h = rect->h + FOCUS_BORDER * 2;
-        SDL_RenderFillRect(renderer, &r);
+        draw_filled_rect(rect->x - FOCUS_BORDER,
+                         rect->y - FOCUS_BORDER,
+                         rect->w + FOCUS_BORDER * 2,
+                         rect->h + FOCUS_BORDER * 2,
+                         ColorFocus);
     }
 
     highlighted = row == data->highlight_row && col == data->highlight_col;
     if (col_mask & br->enter_key_bitmask) {
-        color = highlighted ? &ColorKeyBgEnterHigh : &ColorKeyBgEnter;
+        color = highlighted ? ColorKeyBgEnterHigh : ColorKeyBgEnter;
     } else if (col_mask & br->special_keys_bitmask) {
-        color = highlighted ? &ColorKeyBgSpecialHigh : &ColorKeyBgSpecial;
+        color = highlighted ? ColorKeyBgSpecialHigh : ColorKeyBgSpecial;
     } else {
-        color = highlighted ? &ColorKeyBgLetterHigh : &ColorKeyBgLetter;
+        color = highlighted ? ColorKeyBgLetterHigh : ColorKeyBgLetter;
     }
-    SDL_SetRenderDrawColor(renderer, color->r, color->g, color->b, color->a);
-    SDL_RenderFillRect(renderer, rect);
+    draw_filled_rect_p(rect, color);
 }
 
 static void draw_keys(SDL_OGC_VkContext *context, const TextureData *texture)
@@ -313,7 +344,7 @@ static void draw_keys(SDL_OGC_VkContext *context, const TextureData *texture)
     }
 }
 
-static void draw_keyboard(SDL_OGC_VkContext *context, SDL_Renderer *renderer)
+static void draw_keyboard(SDL_OGC_VkContext *context)
 {
     SDL_OGC_DriverData *data = context->driverdata;
     int start_y = data->screen_height - data->visible_height + 5;
@@ -325,18 +356,17 @@ static void draw_keyboard(SDL_OGC_VkContext *context, SDL_Renderer *renderer)
         int x = br->start_x;
 
         for (int col = 0; col < br->num_keys; col++) {
-            SDL_Rect rect;
+            Rect rect;
             rect.x = x;
             rect.y = y;
             rect.w = br->widths[col] * 2;
             rect.h = ROW_HEIGHT;
-            draw_key_background(context, renderer, &rect, row, col);
+            draw_key_background(context, &rect, row, col);
             x += br->widths[col] * 2 + br->spacing;
         }
     }
 
-    SDL_RenderFlush(renderer);
-    setup_texture_pipeline();
+    setup_pipeline(PIPELINE_TEXTURED);
     texture = lookup_layout_texture(data, data->active_layout);
     if (texture) {
         draw_keys(context, texture);
@@ -629,8 +659,7 @@ static void Init(SDL_OGC_VkContext *context)
 static void RenderKeyboard(SDL_OGC_VkContext *context)
 {
     SDL_OGC_DriverData *data = context->driverdata;
-    SDL_Renderer *renderer;
-    SDL_Rect osk_rect;
+    Rect osk_rect;
 
     //printf("%s called\n", __func__);
     if (data->animation_time > 0) {
@@ -638,20 +667,19 @@ static void RenderKeyboard(SDL_OGC_VkContext *context)
         if (!context->is_open) return;
     }
 
-    renderer = SDL_GetRenderer(context->window);
-    SDL_SetRenderDrawColor(renderer, 0x0e, 0x0e, 0x12, 255);
+    setup_pipeline(PIPELINE_UNTEXTURED);
+
     osk_rect.x = 0;
     osk_rect.y = data->screen_height - data->visible_height;
     osk_rect.w = data->screen_width;
     osk_rect.h = KEYBOARD_HEIGHT;
-    SDL_RenderFillRect(renderer, &osk_rect);
+    draw_filled_rect_p(&osk_rect, 0x0e0e12ff);
 
-    draw_keyboard(context, renderer);
+    draw_keyboard(context);
 
     if (data->app_cursor) {
         SDL_SetCursor(data->default_cursor);
     }
-    SDL_RenderFlush(renderer);
 }
 
 static SDL_bool ProcessEvent(SDL_OGC_VkContext *context, SDL_Event *event)
