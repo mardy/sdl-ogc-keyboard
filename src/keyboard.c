@@ -41,6 +41,12 @@
  * we use if 205 */
 #define LAYOUT_TEXTURE_WIDTH 256
 #define TEX_FORMAT_VERSION 1
+#define INPUTBOX_SIDE_MARGIN 50
+#define INPUTBOX_HEIGHT ROW_HEIGHT
+#define INPUTBOX_SIDE_PADDING 2
+#define INPUT_CURSOR_WIDTH 4
+#define INPUT_CURSOR_BLINK_MS 800
+#define MAX_INPUT_LEN 128
 
 #define PIPELINE_UNTEXTURED 0
 #define PIPELINE_TEXTURED   1
@@ -57,27 +63,39 @@ typedef struct TextureData {
     void *texels;
 } TextureData;
 
+typedef uint8_t KeyID;
+
 struct SDL_OGC_DriverData {
     int16_t screen_width;
     int16_t screen_height;
     int16_t start_pan_y;
     int16_t target_pan_y;
+    int16_t input_panel_visible_height;
+    int16_t input_panel_start_visible_height;
+    int16_t input_panel_target_visible_height;
+    int16_t input_cursor_x;
+    int16_t input_scroll_x;
     int8_t focus_row;
     int8_t focus_col;
     int8_t highlight_row;
     int8_t highlight_col;
     int8_t active_layout;
+    uint8_t text_len;
     int visible_height;
+    uint32_t input_cursor_start_ticks;
     int start_ticks;
     int start_visible_height;
     int target_visible_height;
     int animation_time;
     uint32_t key_color;
+    /* Not characters, but key IDs */
+    KeyID text[MAX_INPUT_LEN];
     SDL_Cursor *app_cursor;
     SDL_Cursor *default_cursor;
     TextureData layout_textures[NUM_LAYOUTS];
 };
 
+static const uint32_t ColorKeyboardBg = 0x0e0e12ff;
 static const uint32_t ColorKeyBgLetter = 0x5a606aff;
 static const uint32_t ColorKeyBgLetterHigh = 0x2d3035ff;
 static const uint32_t ColorKeyBgEnter = 0x003c00ff;
@@ -85,21 +103,25 @@ static const uint32_t ColorKeyBgEnterHigh = 0x32783eff;
 static const uint32_t ColorKeyBgSpecial = 0x32363eff;
 static const uint32_t ColorKeyBgSpecialHigh = 0x191b1fff;
 static const uint32_t ColorFocus = 0xe0f010ff;
+static const uint32_t ColorInputPanelBg = 0x1c1c24ff;
+static const uint32_t ColorInputCursor = ColorKeyBgLetter;
 
 static void HideScreenKeyboard(SDL_OGC_VkContext *context);
 
-static inline int key_id_from_pos(int row, int col)
+static inline KeyID key_id_from_pos(int layout_index, int row, int col)
 {
-    int key_id = 0;
-    for (int i = 0; i < row; i++) {
-        key_id += rows[i]->num_keys;
-    }
-    key_id += col;
-    return key_id;
+    return layout_index * (NUM_ROWS * MAX_BUTTONS_PER_ROW) +
+        row * MAX_BUTTONS_PER_ROW + col;
 }
 
-static inline void key_id_to_pos(int key_id, int *row, int *col)
+static inline void key_id_to_pos(KeyID key_id,
+                                 int *layout_index, int *row, int *col)
 {
+    *col = key_id % MAX_BUTTONS_PER_ROW;
+    key_id /= MAX_BUTTONS_PER_ROW;
+    *row = key_id % NUM_ROWS;
+    key_id /= NUM_ROWS;
+    *layout_index = key_id;
 }
 
 static void free_layout_textures(SDL_OGC_DriverData *data)
@@ -219,9 +241,9 @@ static void activate_layout_texture(const TextureData *texture)
 }
 
 static void draw_font_texture(const TextureData *texture, int row, int col,
-                              int center_x, int center_y, uint32_t color)
+                              int dest_x, int dest_y, uint32_t color)
 {
-    int16_t x, y, w, h, dest_x, dest_y;
+    int16_t x, y, w, h;
 
     x = 0;
     for (int i = 0; i < col; i++) {
@@ -230,9 +252,6 @@ static void draw_font_texture(const TextureData *texture, int row, int col,
     y = texture->key_height * row;
     w = texture->key_widths[row][col];
     h = texture->key_height;
-
-    dest_x = center_x - w / 2;
-    dest_y = center_y - h / 2;
 
     GX_Begin(GX_QUADS, GX_VTXFMT0, 4);
 
@@ -253,6 +272,20 @@ static void draw_font_texture(const TextureData *texture, int row, int col,
     GX_TexCoord2u16(x, y + h);
 
     GX_End();
+}
+
+static inline void draw_font_texture_centered(const TextureData *texture,
+                                              int row, int col,
+                                              int center_x, int center_y,
+                                              uint32_t color)
+{
+    int16_t w, h;
+
+    w = texture->key_widths[row][col];
+    h = texture->key_height;
+
+    draw_font_texture(texture, row, col,
+                      center_x - w / 2, center_y - h / 2, color);
 }
 
 static inline void draw_filled_rect(int16_t x, int16_t y, int16_t w, int16_t h,
@@ -282,14 +315,14 @@ static void draw_filled_rect_p(const Rect *rect, uint32_t color)
 
 static inline void draw_key(SDL_OGC_VkContext *context,
                             const TextureData *texture,
-                            int row, int col, const SDL_Rect *rect)
+                            int row, int col, const Rect *rect)
 {
     SDL_OGC_DriverData *data = context->driverdata;
     int x, y;
 
     x = rect->x + rect->w / 2;
     y = rect->y + rect->h / 2;
-    draw_font_texture(texture, row, col, x, y, data->key_color);
+    draw_font_texture_centered(texture, row, col, x, y, data->key_color);
 }
 
 static inline void draw_key_background(SDL_OGC_VkContext *context,
@@ -333,7 +366,7 @@ static void draw_keys(SDL_OGC_VkContext *context, const TextureData *texture)
         int x = br->start_x;
 
         for (int col = 0; col < br->num_keys; col++) {
-            SDL_Rect rect;
+            Rect rect;
             rect.x = x;
             rect.y = y;
             rect.w = br->widths[col] * 2;
@@ -341,6 +374,76 @@ static void draw_keys(SDL_OGC_VkContext *context, const TextureData *texture)
             draw_key(context, texture, row, col, &rect);
             x += br->widths[col] * 2 + br->spacing;
         }
+    }
+}
+
+static inline int16_t input_box_y(SDL_OGC_DriverData *data)
+{
+    const int height = data->screen_height - KEYBOARD_HEIGHT;
+    int start_y = data->input_panel_visible_height - height;
+    return start_y + (height - INPUTBOX_HEIGHT) / 2;
+}
+
+static void draw_input_text(SDL_OGC_VkContext *context)
+{
+    SDL_OGC_DriverData *data = context->driverdata;
+    int16_t base_y = input_box_y(data);
+    int layout_index, last_layout_index, row, col;
+    const TextureData *texture;
+
+    int16_t field_x = INPUTBOX_SIDE_MARGIN + INPUTBOX_SIDE_PADDING;
+    int16_t x = field_x - data->input_scroll_x;
+    int16_t y;
+
+    GX_SetScissor(field_x, 0,
+                  data->screen_width - field_x * 2, data->screen_height);
+    last_layout_index = -1;
+    for (int i = 0; i < data->text_len; i++) {
+        key_id_to_pos(data->text[i], &layout_index, &row, &col);
+        if (layout_index != last_layout_index) {
+            texture = lookup_layout_texture(data, layout_index);
+            if (!texture) continue;
+
+            activate_layout_texture(texture);
+            y = base_y + (INPUTBOX_HEIGHT - texture->key_height) / 2;
+            last_layout_index = layout_index;
+        }
+        draw_font_texture(texture, row, col, x, y, data->key_color);
+        x += texture->key_widths[row][col];
+    }
+
+    /* Reset scissor */
+    GX_SetScissor(0, 0, data->screen_width, data->screen_height);
+}
+
+static void draw_input_panel(SDL_OGC_VkContext *context)
+{
+    SDL_OGC_DriverData *data = context->driverdata;
+    uint32_t ticks, elapsed;
+
+    int16_t base_y = input_box_y(data);
+    Rect input_rect = {
+        INPUTBOX_SIDE_MARGIN,
+        base_y,
+        data->screen_width - INPUTBOX_SIDE_MARGIN * 2,
+        INPUTBOX_HEIGHT,
+    };
+
+    draw_filled_rect_p(&input_rect, ColorKeyboardBg);
+
+    /* Draw cursor */
+    ticks = SDL_GetTicks();
+    elapsed = ticks - data->input_cursor_start_ticks;
+    bool visible = (elapsed / INPUT_CURSOR_BLINK_MS) % 2 == 0;
+
+    if (visible) {
+        Rect cursor_rect = {
+            INPUTBOX_SIDE_MARGIN + data->input_cursor_x - data->input_scroll_x,
+            base_y + 1,
+            INPUT_CURSOR_WIDTH,
+            INPUTBOX_HEIGHT - 2,
+        };
+        draw_filled_rect_p(&cursor_rect, ColorInputCursor);
     }
 }
 
@@ -372,7 +475,6 @@ static void draw_keyboard(SDL_OGC_VkContext *context)
         draw_keys(context, texture);
     }
 
-    GX_SetTexCoordScaleManually(GX_TEXCOORD0, GX_FALSE, 0, 0);
     GX_DrawDone();
 }
 
@@ -389,6 +491,54 @@ static void dispose_keyboard(SDL_OGC_VkContext *context)
     }
 }
 
+static void send_input_text(SDL_OGC_VkContext *context)
+{
+    SDL_OGC_DriverData *data = context->driverdata;
+    int layout_index, row, col;
+
+    for (int i = 0; i < data->text_len; i++) {
+        key_id_to_pos(data->text[i], &layout_index, &row, &col);
+        const char *text = text_by_pos_and_layout(row, col, layout_index);
+        SDL_OGC_SendKeyboardText(text);
+    }
+    HideScreenKeyboard(context);
+}
+
+static void update_input_cursor(SDL_OGC_DriverData *data)
+{
+    int layout_index, last_layout_index, row, col;
+    const TextureData *texture;
+
+    const int max_x = data->screen_width -
+        (INPUTBOX_SIDE_MARGIN + INPUTBOX_SIDE_PADDING) * 2 -
+        INPUT_CURSOR_WIDTH;
+    int x = 0;
+
+    /* For the time being, the cursor is always at the end of the string */
+    last_layout_index = -1;
+    for (int i = 0; i < data->text_len; i++) {
+        key_id_to_pos(data->text[i], &layout_index, &row, &col);
+        if (layout_index != last_layout_index) {
+            texture = lookup_layout_texture(data, layout_index);
+            if (!texture) continue;
+
+            last_layout_index = layout_index;
+        }
+        x += texture->key_widths[row][col];
+    }
+
+    if (x < data->input_scroll_x) {
+        data->input_scroll_x = x;
+    } else if (x > max_x) {
+        data->input_scroll_x = x - max_x;
+    } else {
+        data->input_scroll_x = 0;
+    }
+    data->input_cursor_x = x;
+    /* Reset the cursor time so that it's shown */
+    data->input_cursor_start_ticks = SDL_GetTicks();
+}
+
 static void update_animation(SDL_OGC_VkContext *context)
 {
     SDL_OGC_DriverData *data = context->driverdata;
@@ -400,6 +550,7 @@ static void update_animation(SDL_OGC_VkContext *context)
 
     if (elapsed >= data->animation_time) {
         data->visible_height = data->target_visible_height;
+        data->input_panel_visible_height = data->input_panel_target_visible_height;
         context->screen_pan_y = data->target_pan_y;
         data->animation_time = 0;
         printf("Desired state reached\n");
@@ -411,6 +562,11 @@ static void update_animation(SDL_OGC_VkContext *context)
         double pos = sin(M_PI_2 * elapsed / data->animation_time);
         data->visible_height = data->start_visible_height +
             height_diff * pos;
+
+        height_diff = data->input_panel_target_visible_height - data->input_panel_start_visible_height;
+        data->input_panel_visible_height = data->input_panel_start_visible_height +
+            height_diff * pos;
+
         height_diff = data->target_pan_y - data->start_pan_y;
         context->screen_pan_y = data->start_pan_y + height_diff * pos;
     }
@@ -470,11 +626,22 @@ static void activate_key(SDL_OGC_VkContext *context, int row, int col)
     SDL_OGC_DriverData *data = context->driverdata;
     const char *text = text_by_pos(data, row, col);
 
+    bool has_input_box = data->input_panel_visible_height > 0;
+
     /* We can use pointer comparisons here */
     if (text == KEYCAP_BACKSPACE) {
-        SDL_OGC_SendVirtualKeyboardKey(SDL_PRESSED, SDL_SCANCODE_BACKSPACE);
+        if (has_input_box) {
+            if (data->text_len > 0) data->text_len--;
+            update_input_cursor(data);
+        } else {
+            SDL_OGC_SendVirtualKeyboardKey(SDL_PRESSED, SDL_SCANCODE_BACKSPACE);
+        }
     } else if (text == KEYCAP_RETURN) {
-        SDL_OGC_SendVirtualKeyboardKey(SDL_PRESSED, SDL_SCANCODE_RETURN);
+        if (has_input_box) {
+            send_input_text(context);
+        } else {
+            SDL_OGC_SendVirtualKeyboardKey(SDL_PRESSED, SDL_SCANCODE_RETURN);
+        }
     } else if (text == KEYCAP_ABC) {
         switch_layout(context, 0);
     } else if (text == KEYCAP_SHIFT) {
@@ -484,7 +651,15 @@ static void activate_key(SDL_OGC_VkContext *context, int row, int col)
     } else if (text == KEYCAP_SYM1) {
         switch_layout(context, 3);
     } else {
-        SDL_OGC_SendKeyboardText(text);
+        if (has_input_box) {
+            if (data->text_len < MAX_INPUT_LEN) {
+                KeyID key = key_id_from_pos(data->active_layout, row, col);
+                data->text[data->text_len++] = key;
+                update_input_cursor(data);
+            }
+        } else {
+            SDL_OGC_SendKeyboardText(text);
+        }
     }
 }
 
@@ -495,7 +670,8 @@ static void handle_click(SDL_OGC_VkContext *context, int px, int py)
 
     if (data->focus_row >= 0) return;
 
-    if (py < data->screen_height - KEYBOARD_HEIGHT) {
+    bool has_input_box = data->input_panel_visible_height > 0;
+    if (!has_input_box && py < data->screen_height - KEYBOARD_HEIGHT) {
         HideScreenKeyboard(context);
         return;
     }
@@ -673,10 +849,22 @@ static void RenderKeyboard(SDL_OGC_VkContext *context)
     osk_rect.y = data->screen_height - data->visible_height;
     osk_rect.w = data->screen_width;
     osk_rect.h = KEYBOARD_HEIGHT;
-    draw_filled_rect_p(&osk_rect, 0x0e0e12ff);
+    draw_filled_rect_p(&osk_rect, ColorKeyboardBg);
+
+    if (data->input_panel_visible_height > 0) {
+        osk_rect.y = 0;
+        osk_rect.h = data->input_panel_visible_height;
+        draw_filled_rect_p(&osk_rect, ColorInputPanelBg);
+        draw_input_panel(context);
+    }
 
     draw_keyboard(context);
 
+    if (data->input_panel_visible_height > 0) {
+        draw_input_text(context);
+    }
+
+    GX_SetTexCoordScaleManually(GX_TEXCOORD0, GX_FALSE, 0, 0);
     if (data->app_cursor) {
         SDL_SetCursor(data->default_cursor);
     }
@@ -766,6 +954,13 @@ static void ShowScreenKeyboard(SDL_OGC_VkContext *context)
     data->target_visible_height = KEYBOARD_HEIGHT;
     data->animation_time = ANIMATION_TIME_ENTER;
 
+    if (context->input_rect.h == 0) {
+        /* If there's no input rect, bring down our own */
+        data->input_panel_start_visible_height = data->input_panel_visible_height;
+        data->input_panel_target_visible_height =
+            data->screen_height - KEYBOARD_HEIGHT;
+    }
+
     cursor = SDL_GetCursor();
     default_cursor = SDL_GetDefaultCursor();
     if (cursor != default_cursor) {
@@ -782,6 +977,8 @@ static void HideScreenKeyboard(SDL_OGC_VkContext *context)
     data->start_ticks = SDL_GetTicks();
     data->start_visible_height = data->visible_height;
     data->target_visible_height = 0;
+    data->input_panel_start_visible_height = data->input_panel_visible_height;
+    data->input_panel_target_visible_height = 0;
     data->start_pan_y = context->screen_pan_y;
     data->target_pan_y = 0;
     data->animation_time = ANIMATION_TIME_EXIT;
