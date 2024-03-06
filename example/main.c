@@ -18,8 +18,11 @@ static TTF_Font *font;
 
 static SDL_Texture *btn_input1_tex = NULL;
 static SDL_Texture *btn_quit_tex = NULL;
-static const SDL_Rect btn_input1_rect = {5, 5, 200, 30};
+static const SDL_Rect btn_input1_rect = {5, 15, 200, 30};
 static const SDL_Rect btn_quit_rect = { 30, 400, 500, 30 };
+static const SDL_Rect text_input1_rect = {215, 15, 400, 30};
+static char input1_text[128];
+static char *text_destination;
 
 /* Declare binary resources embedded into executable */
 extern char _binary_DejaVuSans_ttf_start[], _binary_DejaVuSans_ttf_end[];
@@ -51,7 +54,15 @@ static void draw_ui()
 
     SDL_SetRenderDrawColor(renderer, 96, 0, 0, 196);
     SDL_RenderFillRect(renderer, &btn_input1_rect);
-    draw_texture(btn_input1_tex, 10, 10);
+    draw_texture(btn_input1_tex, btn_input1_rect.x + 5, btn_input1_rect.y + 5);
+
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 196);
+    SDL_RenderFillRect(renderer, &text_input1_rect);
+    if (input1_text[0] != '\0') {
+        SDL_Texture *text = build_text(input1_text);
+        draw_texture(text, text_input1_rect.x + 5, text_input1_rect.y + 5);
+        SDL_DestroyTexture(text);
+    }
 
     SDL_SetRenderDrawColor(renderer, 255, 0, 0, 196);
     SDL_RenderFillRect(renderer, &btn_quit_rect);
@@ -72,6 +83,9 @@ static bool loop()
             break;
         case SDL_TEXTINPUT:
             printf("INPUT %s", event.text.text);
+            if (text_destination) {
+                strcat(text_destination, event.text.text);
+            }
             break;
         case SDL_MOUSEBUTTONDOWN:
             if (event.button.button != SDL_BUTTON_LEFT) break;
@@ -80,6 +94,12 @@ static bool loop()
             if (SDL_PointInRect(&pt, &btn_quit_rect)) {
                 return true;
             } else if (SDL_PointInRect(&pt, &btn_input1_rect)) {
+                    SDL_Log("Starting text input\n");
+                    text_destination = input1_text;
+                    input1_text[0] = '\0';
+                    SDL_StartTextInput();
+#if 0
+            } else if (SDL_PointInRect(&pt, &btn_input2_rect)) {
                 if (SDL_IsTextInputActive()) {
                     SDL_Log("Stopping text input\n");
                     SDL_StopTextInput();
@@ -87,6 +107,7 @@ static bool loop()
                     SDL_Log("Starting text input\n");
                     SDL_StartTextInput();
                 }
+#endif
             }
             break;
         case SDL_QUIT:
