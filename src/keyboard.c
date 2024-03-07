@@ -478,12 +478,23 @@ static void draw_keyboard(SDL_OGC_VkContext *context)
     GX_DrawDone();
 }
 
+static inline void init_data(SDL_OGC_DriverData *data)
+{
+    data->active_layout = 0;
+    data->highlight_row = -1;
+    data->focus_row = -1;
+    data->text_len = 0;
+    data->input_scroll_x = 0;
+    data->input_cursor_x = 0;
+}
+
 static void dispose_keyboard(SDL_OGC_VkContext *context)
 {
     SDL_OGC_DriverData *data = context->driverdata;
 
     context->is_open = SDL_FALSE;
     free_layout_textures(data);
+    init_data(data);
 
     if (data->app_cursor) {
         SDL_SetCursor(data->app_cursor);
@@ -826,8 +837,7 @@ static void Init(SDL_OGC_VkContext *context)
     printf("%s called\n", __func__);
 
     data = SDL_calloc(sizeof(SDL_OGC_DriverData), 1);
-    data->highlight_row = -1;
-    data->focus_row = -1;
+    init_data(data);
     data->key_color = 0xffffffff;
     context->driverdata = data;
 }
