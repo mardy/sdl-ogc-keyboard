@@ -87,6 +87,12 @@ Enabling the OSK is a matter of changing a few lines only:
 3. Call `SDL_StartTextInput()` when needed.
 
 
+## Example
+
+The `example/` directory contains a small program which shows how to use the OSK:
+
+https://github.com/mardy/sdl-ogc-keyboard/assets/59287/3722aa76-b17c-4c77-b148-3cec2b218869
+
 ## Configuring the layouts
 
 Layouts can be configured by editing `src/config.c`.
