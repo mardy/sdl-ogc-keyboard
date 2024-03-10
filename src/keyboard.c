@@ -838,6 +838,15 @@ static void handle_joy_button(SDL_OGC_VkContext *context,
     }
 }
 
+static void init_screen(SDL_OGC_DriverData *data)
+{
+    SDL_Rect screen;
+    SDL_GetDisplayBounds(0, &screen);
+    data->screen_width = screen.w;
+    data->screen_height = screen.h;
+    printf("Screen: %d,%d\n", screen.w, screen.h);
+}
+
 static void Init(SDL_OGC_VkContext *context)
 {
     SDL_OGC_DriverData *data;
@@ -943,6 +952,7 @@ static void SetTextInputRect(SDL_OGC_VkContext *context, const SDL_Rect *rect)
     }
 
     if (context->input_rect.h != 0) {
+        init_screen(data);
         /* Pan the input rect so that it remains visible even when the OSK is
          * open */
         int desired_input_rect_y = (data->screen_height - KEYBOARD_HEIGHT - context->input_rect.h) / 2;
@@ -959,13 +969,7 @@ static void ShowScreenKeyboard(SDL_OGC_VkContext *context)
     SDL_Cursor *cursor, *default_cursor;
 
     printf("%s called\n", __func__);
-    if (data->screen_width == 0) {
-        SDL_Rect screen;
-        SDL_GetDisplayBounds(0, &screen);
-        data->screen_width = screen.w;
-        data->screen_height = screen.h;
-        printf("Screen: %d,%d\n", screen.w, screen.h);
-    }
+    init_screen(data);
     context->is_open = SDL_TRUE;
     data->start_ticks = SDL_GetTicks();
     data->start_visible_height = data->visible_height;
