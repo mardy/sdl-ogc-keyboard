@@ -81,6 +81,7 @@ struct SDL_OGC_DriverData {
     int8_t highlight_col;
     int8_t active_layout;
     uint8_t text_len;
+    bool should_stop_text_input;
     int visible_height;
     uint32_t input_cursor_start_ticks;
     int start_ticks;
@@ -486,11 +487,16 @@ static inline void init_data(SDL_OGC_DriverData *data)
     data->text_len = 0;
     data->input_scroll_x = 0;
     data->input_cursor_x = 0;
+    data->should_stop_text_input = false;
 }
 
 static void dispose_keyboard(SDL_OGC_VkContext *context)
 {
     SDL_OGC_DriverData *data = context->driverdata;
+
+    if (data->should_stop_text_input) {
+        SDL_StopTextInput();
+    }
 
     context->is_open = SDL_FALSE;
     free_layout_textures(data);
@@ -512,6 +518,7 @@ static void send_input_text(SDL_OGC_VkContext *context)
         const char *text = text_by_pos_and_layout(row, col, layout_index);
         SDL_OGC_SendKeyboardText(text);
     }
+    data->should_stop_text_input = true;
     HideScreenKeyboard(context);
 }
 
@@ -683,6 +690,7 @@ static void handle_click(SDL_OGC_VkContext *context, int px, int py)
 
     bool has_input_box = data->input_panel_visible_height > 0;
     if (!has_input_box && py < data->screen_height - KEYBOARD_HEIGHT) {
+        data->should_stop_text_input = true;
         HideScreenKeyboard(context);
         return;
     }
