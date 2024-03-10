@@ -17,11 +17,20 @@ static SDL_Texture *background;
 static TTF_Font *font;
 
 static SDL_Texture *btn_input1_tex = NULL;
+static SDL_Texture *btn_input2_tex = NULL;
+static SDL_Texture *text_input1_tex = NULL;
+static SDL_Texture *text_input2_tex = NULL;
+static SDL_Texture *text_input3_tex = NULL;
 static SDL_Texture *btn_quit_tex = NULL;
 static const SDL_Rect btn_input1_rect = {5, 15, 200, 30};
+static const SDL_Rect btn_input2_rect = {5, 215, 200, 30};
 static const SDL_Rect btn_quit_rect = { 30, 400, 500, 30 };
 static const SDL_Rect text_input1_rect = {215, 15, 400, 30};
+static const SDL_Rect text_input2_rect = {215, 215, 400, 30};
+static const SDL_Rect text_input3_rect = {215, 315, 400, 30};
 static char input1_text[128];
+static char input2_text[128];
+static char input3_text[128];
 static char *text_destination;
 
 /* Declare binary resources embedded into executable */
@@ -59,14 +68,53 @@ static void draw_ui()
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 196);
     SDL_RenderFillRect(renderer, &text_input1_rect);
     if (input1_text[0] != '\0') {
-        SDL_Texture *text = build_text(input1_text);
-        draw_texture(text, text_input1_rect.x + 5, text_input1_rect.y + 5);
-        SDL_DestroyTexture(text);
+        if (text_input1_tex)
+            SDL_DestroyTexture(text_input1_tex);
+        text_input1_tex = build_text(input1_text);
+        draw_texture(text_input1_tex, text_input1_rect.x + 5, text_input1_rect.y + 5);
+    }
+
+    SDL_SetRenderDrawColor(renderer, 96, 0, 0, 196);
+    SDL_RenderFillRect(renderer, &btn_input2_rect);
+    draw_texture(btn_input2_tex, btn_input2_rect.x + 5, btn_input2_rect.y + 5);
+
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 196);
+    SDL_RenderFillRect(renderer, &text_input2_rect);
+    if (input2_text[0] != '\0') {
+        if (text_input2_tex)
+            SDL_DestroyTexture(text_input2_tex);
+        text_input2_tex = build_text(input2_text);
+        draw_texture(text_input2_tex, text_input2_rect.x + 5, text_input2_rect.y + 5);
+    }
+
+    SDL_RenderFillRect(renderer, &text_input3_rect);
+    if (input3_text[0] != '\0') {
+        if (text_input3_tex)
+            SDL_DestroyTexture(text_input3_tex);
+        text_input3_tex = build_text(input3_text);
+        draw_texture(text_input3_tex, text_input3_rect.x + 5, text_input3_rect.y + 5);
     }
 
     SDL_SetRenderDrawColor(renderer, 255, 0, 0, 196);
     SDL_RenderFillRect(renderer, &btn_quit_rect);
     draw_texture(btn_quit_tex, btn_quit_rect.x + 200, btn_quit_rect.y + 5);
+}
+
+static void remove_last_char(char *text)
+{
+    if (!text) return;
+
+    int l = strlen(text);
+    if (l == 0) return;
+
+    char *c = &text[l - 1];
+    /* Note: this is more complex than we'd like, but it's the simplest thing
+     * we can do to not completely break the UTF-8 string */
+    while ((*c & 0xc0) == 0x80 && c != text) {
+        *c = '\0';
+        c--;
+    }
+    *c = '\0';
 }
 
 static bool loop()
@@ -87,6 +135,24 @@ static bool loop()
                 strcat(text_destination, event.text.text);
             }
             break;
+        case SDL_KEYDOWN:
+            switch (event.key.keysym.sym) {
+            case SDLK_BACKSPACE:
+                remove_last_char(text_destination);
+                break;
+            case SDLK_RETURN:
+                if (text_destination == input2_text) {
+                    /* Move focus to input3 */
+                    text_destination = input3_text;
+                    SDL_StopTextInput();
+                    SDL_SetTextInputRect(&text_input3_rect);
+                    SDL_StartTextInput();
+                } else {
+                    SDL_StopTextInput();
+                }
+                break;
+            }
+            break;
         case SDL_MOUSEBUTTONDOWN:
             if (event.button.button != SDL_BUTTON_LEFT) break;
 
@@ -97,17 +163,18 @@ static bool loop()
                     SDL_Log("Starting text input\n");
                     text_destination = input1_text;
                     input1_text[0] = '\0';
+                    SDL_SetTextInputRect(NULL);
                     SDL_StartTextInput();
-#if 0
             } else if (SDL_PointInRect(&pt, &btn_input2_rect)) {
+                text_destination = input2_text;
                 if (SDL_IsTextInputActive()) {
                     SDL_Log("Stopping text input\n");
                     SDL_StopTextInput();
                 } else {
                     SDL_Log("Starting text input\n");
+                    SDL_SetTextInputRect(&text_input2_rect);
                     SDL_StartTextInput();
                 }
-#endif
             }
             break;
         case SDL_QUIT:
@@ -168,6 +235,7 @@ int main(int argc, char *argv[])
     background = load_background(renderer);
 
     btn_input1_tex = build_text("Input without control:");
+    btn_input2_tex = build_text("Input with control:");
     btn_quit_tex = build_text("Quit");
 
     SDL_PumpEvents();
